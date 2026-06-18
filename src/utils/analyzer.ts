@@ -1,13 +1,29 @@
 import { ActiveColumns, DocumentRecord, MetricData } from '../types';
 
-export const normalizeKeyword = (k: string) => k.toLowerCase().replace(/\*/g, '').trim();
+export const escapeRegExp = (str: string) => {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
 
-const matchKeyword = (text: string, keyword: string) => {
+export const matchKeyword = (text: string, keyword: string) => {
   if (!text) return false;
-  const normText = text.toLowerCase();
-  const normKeyword = normalizeKeyword(keyword);
-  if (!normKeyword) return false;
-  return normText.includes(normKeyword);
+  const trimmed = keyword.trim();
+  if (!trimmed) return false;
+
+  if (trimmed.includes('*')) {
+    // Wildcard variant match: strip '*' and check if it is included
+    const clean = trimmed.replace(/\*/g, '').toLowerCase();
+    if (!clean) return false;
+    return text.toLowerCase().includes(clean);
+  } else {
+    // Exact word match using word boundaries
+    try {
+      const escaped = escapeRegExp(trimmed);
+      const regex = new RegExp(`\\b${escaped}\\b`, 'i');
+      return regex.test(text);
+    } catch (e) {
+      return text.toLowerCase().includes(trimmed.toLowerCase());
+    }
+  }
 };
 
 export const findOccurrences = (
@@ -16,10 +32,13 @@ export const findOccurrences = (
   activeColumns: ActiveColumns
 ): MetricData[] => {
   const yearMap = new Map<string, Record<string, number>>();
+  const totalDocsMap = new Map<string, number>();
 
   records.forEach((record) => {
     if (!record.year || !record.year.match(/^\d{4}$/)) return;
     const year = record.year;
+
+    totalDocsMap.set(year, (totalDocsMap.get(year) || 0) + 1);
 
     if (!yearMap.has(year)) {
       const initialCounts: Record<string, number> = {};
@@ -42,7 +61,11 @@ export const findOccurrences = (
   });
 
   return Array.from(yearMap.entries())
-    .map(([year, counts]) => ({ year, ...counts }))
+    .map(([year, counts]) => ({
+      year,
+      ...counts,
+      _totalDocs: totalDocsMap.get(year) || 0
+    }))
     .sort((a, b) => parseInt(a.year) - parseInt(b.year));
 };
 
@@ -53,6 +76,7 @@ export const findCoOccurrences = (
   limitPairs: number = 10 // top N pairs
 ): { chartData: MetricData[], topPairs: string[] } => {
   const yearMap = new Map<string, Record<string, number>>();
+  const totalDocsMap = new Map<string, number>();
   const pairTotals: Record<string, number> = {};
 
   // Initialize pairs
@@ -68,6 +92,8 @@ export const findCoOccurrences = (
   records.forEach((record) => {
     if (!record.year || !record.year.match(/^\d{4}$/)) return;
     const year = record.year;
+
+    totalDocsMap.set(year, (totalDocsMap.get(year) || 0) + 1);
 
     if (!yearMap.has(year)) {
       const initialCounts: Record<string, number> = {};
@@ -113,7 +139,10 @@ export const findCoOccurrences = (
   // Simplify chart data to only include top pairs
   const chartData: MetricData[] = Array.from(yearMap.entries())
     .map(([year, counts]) => {
-      const res: MetricData = { year };
+      const res: MetricData = { 
+        year,
+        _totalDocs: totalDocsMap.get(year) || 0
+      };
       sortedPairs.forEach(p => {
         res[p] = counts[p];
       });

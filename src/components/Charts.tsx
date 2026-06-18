@@ -7,6 +7,7 @@ interface ChartsProps {
   dataKeys: string[];
   title: string;
   colors?: string[];
+  suffix?: string;
 }
 
 const DEFAULT_COLORS = [
@@ -14,7 +15,7 @@ const DEFAULT_COLORS = [
   '#ef4444', '#8b5cf6', '#10b981', '#3b82f6', '#f43f5e'
 ];
 
-export const TrendsChart: React.FC<ChartsProps> = ({ data, dataKeys, title, colors = DEFAULT_COLORS }) => {
+export const TrendsChart: React.FC<ChartsProps> = ({ data, dataKeys, title, colors = DEFAULT_COLORS, suffix = '' }) => {
   if (dataKeys.length === 0 || data.length === 0) {
     return (
       <div className="flex h-full min-h-[300px] items-center justify-center border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/50">
@@ -42,10 +43,12 @@ export const TrendsChart: React.FC<ChartsProps> = ({ data, dataKeys, title, colo
               axisLine={false}
               tickLine={false}
               dx={-10}
+              tickFormatter={(val) => `${val}${suffix}`}
             />
             <Tooltip 
               contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: '#0f172a', color: '#fff', fontSize: '12px', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
               itemStyle={{ color: '#fff' }}
+              formatter={(value: any, name: string) => [`${value}${suffix}`, name]}
             />
             <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '12px' }} />
             {dataKeys.map((key, i) => (
