@@ -4,24 +4,36 @@ export const escapeRegExp = (str: string) => {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 };
 
+export const removeAccents = (str: string): string => {
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+};
+
 export const matchKeyword = (text: string, keyword: string) => {
   if (!text) return false;
   const trimmed = keyword.trim();
   if (!trimmed) return false;
 
-  if (trimmed.includes('*')) {
+  const normalizedText = removeAccents(text.toLowerCase());
+  const normalizedKeyword = removeAccents(trimmed.toLowerCase());
+
+  if (normalizedKeyword.includes('*')) {
     // Wildcard variant match: strip '*' and check if it is included
-    const clean = trimmed.replace(/\*/g, '').toLowerCase();
+    const clean = normalizedKeyword.replace(/\*/g, '');
     if (!clean) return false;
-    return text.toLowerCase().includes(clean);
+    return normalizedText.includes(clean);
   } else {
     // Exact word match using word boundaries
     try {
-      const escaped = escapeRegExp(trimmed);
+      const escaped = escapeRegExp(normalizedKeyword);
+      // If the keyword contains special boundary characters like punctuation (hyphen, dot, slash...),
+      // use standard substring check to avoid regex word boundary (\b) mismatch issues
+      if (/[^a-zA-Z0-9_\u00c0-\u00ff]/.test(normalizedKeyword)) {
+        return normalizedText.includes(normalizedKeyword);
+      }
       const regex = new RegExp(`\\b${escaped}\\b`, 'i');
-      return regex.test(text);
+      return regex.test(normalizedText);
     } catch (e) {
-      return text.toLowerCase().includes(trimmed.toLowerCase());
+      return normalizedText.includes(normalizedKeyword);
     }
   }
 };
@@ -152,3 +164,103 @@ export const findCoOccurrences = (
 
   return { chartData, topPairs: sortedPairs };
 };
+
+export interface StrategicTheme {
+  keyword: string;
+  centrality: number;
+  density: number;
+  occurrences: number;
+}
+
+export const calculateStrategicThemes = (
+  records: DocumentRecord[],
+  keywords: string[],
+  activeColumns: ActiveColumns
+): StrategicTheme[] => {
+  if (keywords.length === 0) return [];
+
+  // Count occurrences
+  const occurrences: Record<string, number> = {};
+  const majorOccurrences: Record<string, number> = {};
+  
+  keywords.forEach(k => {
+    occurrences[k] = 0;
+    majorOccurrences[k] = 0;
+  });
+
+  const coOccur: Record<string, Record<string, number>> = {};
+  keywords.forEach(k1 => {
+    coOccur[k1] = {};
+    keywords.forEach(k2 => {
+      coOccur[k1][k2] = 0;
+    });
+  });
+
+  records.forEach(rc => {
+    const textToSearch = [
+      activeColumns.title ? rc.title : '',
+      activeColumns.abstract ? rc.abstract : '',
+      activeColumns.keywords ? rc.keywords : ''
+    ].join(' ');
+
+    const titleAndKw = [
+      activeColumns.title ? rc.title : '',
+      activeColumns.keywords ? rc.keywords : ''
+    ].join(' ');
+
+    const present = keywords.filter(k => matchKeyword(textToSearch, k));
+    
+    // Count total and major occurrences
+    present.forEach(k => {
+      occurrences[k] += 1;
+      if (matchKeyword(titleAndKw, k)) {
+        majorOccurrences[k] += 1;
+      }
+    });
+
+    // Count co-occurrences
+    for (let i = 0; i < present.length; i++) {
+      for (let j = 0; j < present.length; j++) {
+        if (i !== j) {
+          coOccur[present[i]][present[j]] += 1;
+        }
+      }
+    }
+  });
+
+  // Compute Centrality and Density
+  return keywords.map(k => {
+    const totalOcc = occurrences[k];
+    
+    // Compute Centrality: Sum of equivalence index (Callon)
+    // E_ij = (c_ij ^ 2) / (c_i * c_j)
+    let equivalenceSum = 0;
+    keywords.forEach(other => {
+      if (other !== k) {
+        const coVal = coOccur[k][other];
+        const occOther = occurrences[other];
+        if (coVal > 0 && totalOcc > 0 && occOther > 0) {
+          equivalenceSum += (coVal * coVal) / (totalOcc * occOther);
+        }
+      }
+    });
+
+    // Multiply by 100 for a consistent scale
+    const centrality = parseFloat((equivalenceSum * 100).toFixed(1));
+
+    // Compute Density: Major Occurrences (Title + Keywords) / Total Occurrences
+    // Means "How much is this concept a focus rather than just passing mention"
+    let density = 0;
+    if (totalOcc > 0) {
+      density = parseFloat(((majorOccurrences[k] / totalOcc) * 100).toFixed(1));
+    }
+
+    return {
+      keyword: k,
+      centrality,
+      density,
+      occurrences: totalOcc
+    };
+  });
+};
+

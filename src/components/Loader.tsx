@@ -3,10 +3,10 @@ import { UploadCloud } from 'lucide-react';
 import { cn } from '../utils/cn';
 
 interface LoaderProps {
-  onFileSelect: (file: File) => void;
+  onFilesSelect: (files: File[]) => void;
 }
 
-export const Loader: React.FC<LoaderProps> = ({ onFileSelect }) => {
+export const Loader: React.FC<LoaderProps> = ({ onFilesSelect }) => {
   const [isDragging, setIsDragging] = useState(false);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -23,13 +23,13 @@ export const Loader: React.FC<LoaderProps> = ({ onFileSelect }) => {
     e.preventDefault();
     setIsDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      onFileSelect(e.dataTransfer.files[0]);
+      onFilesSelect(Array.from(e.dataTransfer.files));
     }
-  }, [onFileSelect]);
+  }, [onFilesSelect]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      onFileSelect(e.target.files[0]);
+      onFilesSelect(Array.from(e.target.files));
     }
   };
 
@@ -38,7 +38,7 @@ export const Loader: React.FC<LoaderProps> = ({ onFileSelect }) => {
       <div className="max-w-xl w-full text-center space-y-6">
         <h1 className="text-4xl font-bold tracking-tight text-slate-900">Outil d'Analyse Textuelle</h1>
         <p className="text-lg text-slate-600">
-          Uploadez votre fichier .RIS ou .CSV exporté depuis Scopus pour analyser les corrélations thématiques dans le temps.
+          Uploadez vos fichiers .RIS ou .CSV exportés depuis Scopus pour analyser les corrélations thématiques dans le temps. Vous pouvez sélectionner plusieurs fichiers.
         </p>
 
         <div
@@ -57,11 +57,12 @@ export const Loader: React.FC<LoaderProps> = ({ onFileSelect }) => {
                 htmlFor="file-upload"
                 className="relative cursor-pointer rounded-md bg-white font-medium text-indigo-600 focus-within:outline-none focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 hover:text-indigo-500"
               >
-                <span>Uploader un fichier</span>
+                <span>Uploader des fichiers</span>
                 <input
                   id="file-upload"
                   name="file-upload"
                   type="file"
+                  multiple
                   accept=".csv,.ris"
                   className="sr-only"
                   onChange={handleChange}
@@ -69,7 +70,7 @@ export const Loader: React.FC<LoaderProps> = ({ onFileSelect }) => {
               </label>
               <p className="pl-1">ou glissez-déposez</p>
             </div>
-            <p className="text-xs text-slate-500">Fichiers .CSV ou .RIS jusqu'à 50MB</p>
+            <p className="text-xs text-slate-500">Fichiers .CSV ou .RIS</p>
           </div>
         </div>
       </div>
