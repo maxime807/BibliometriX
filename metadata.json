@@ -1,0 +1,8 @@
+{
+  "name": "Textual Analysis Tool",
+  "description": "Scientific literature textual analysis and correlation tool.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
