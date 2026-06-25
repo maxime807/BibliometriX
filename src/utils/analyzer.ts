@@ -174,93 +174,141 @@ export interface StrategicTheme {
 
 export const calculateStrategicThemes = (
   records: DocumentRecord[],
-  keywords: string[],
+  activeKeywordsList: string[],
   activeColumns: ActiveColumns
 ): StrategicTheme[] => {
-  if (keywords.length === 0) return [];
+  if (activeKeywordsList.length === 0) return [];
 
-  // Count occurrences
-  const occurrences: Record<string, number> = {};
-  const majorOccurrences: Record<string, number> = {};
-  
-  keywords.forEach(k => {
-    occurrences[k] = 0;
-    majorOccurrences[k] = 0;
+  // 1. Extract and count all global author keywords to build the Callon framework
+  const docKeywords = records.map(rc => {
+    if (!rc.keywords) return [];
+    return Array.from(new Set(
+      rc.keywords.toLowerCase()
+        .split(/[,;]/)
+        .map(k => k.trim())
+        .filter(k => k.length > 2)
+    ));
   });
 
-  const coOccur: Record<string, Record<string, number>> = {};
-  keywords.forEach(k1 => {
-    coOccur[k1] = {};
-    keywords.forEach(k2 => {
-      coOccur[k1][k2] = 0;
+  const kwGlobalCount: Record<string, number> = {};
+  docKeywords.forEach(kws => {
+    kws.forEach(kw => {
+      kwGlobalCount[kw] = (kwGlobalCount[kw] || 0) + 1;
     });
   });
 
-  records.forEach(rc => {
-    const textToSearch = [
-      activeColumns.title ? rc.title : '',
-      activeColumns.abstract ? rc.abstract : '',
-      activeColumns.keywords ? rc.keywords : ''
-    ].join(' ');
+  const strategicThemes: StrategicTheme[] = [];
 
-    const titleAndKw = [
-      activeColumns.title ? rc.title : '',
-      activeColumns.keywords ? rc.keywords : ''
-    ].join(' ');
+  // For each user active keyword, we build its semantic cluster (ego-network)
+  activeKeywordsList.forEach(userKey => {
+    let totalOccurrences = 0;
+    const coOccurWithUser: Record<string, number> = {};
+    const matchingDocIndices: number[] = [];
 
-    const present = keywords.filter(k => matchKeyword(textToSearch, k));
-    
-    // Count total and major occurrences
-    present.forEach(k => {
-      occurrences[k] += 1;
-      if (matchKeyword(titleAndKw, k)) {
-        majorOccurrences[k] += 1;
+    // Find documents containing the user keyword and build the co-occurrence vector
+    records.forEach((rc, idx) => {
+      const textToSearch = [
+        activeColumns.title ? rc.title : '',
+        activeColumns.abstract ? rc.abstract : '',
+        activeColumns.keywords ? rc.keywords : ''
+      ].join(' ');
+
+      if (matchKeyword(textToSearch, userKey)) {
+        totalOccurrences++;
+        matchingDocIndices.push(idx);
+        
+        docKeywords[idx].forEach(kw => {
+          coOccurWithUser[kw] = (coOccurWithUser[kw] || 0) + 1;
+        });
       }
     });
 
-    // Count co-occurrences
-    for (let i = 0; i < present.length; i++) {
-      for (let j = 0; j < present.length; j++) {
-        if (i !== j) {
-          coOccur[present[i]][present[j]] += 1;
-        }
-      }
-    }
-  });
-
-  // Compute Centrality and Density
-  return keywords.map(k => {
-    const totalOcc = occurrences[k];
-    
-    // Compute Centrality: Sum of equivalence index (Callon)
-    // E_ij = (c_ij ^ 2) / (c_i * c_j)
-    let equivalenceSum = 0;
-    keywords.forEach(other => {
-      if (other !== k) {
-        const coVal = coOccur[k][other];
-        const occOther = occurrences[other];
-        if (coVal > 0 && totalOcc > 0 && occOther > 0) {
-          equivalenceSum += (coVal * coVal) / (totalOcc * occOther);
-        }
-      }
-    });
-
-    // Multiply by 100 for a consistent scale
-    const centrality = parseFloat((equivalenceSum * 100).toFixed(1));
-
-    // Compute Density: Major Occurrences (Title + Keywords) / Total Occurrences
-    // Means "How much is this concept a focus rather than just passing mention"
-    let density = 0;
-    if (totalOcc > 0) {
-      density = parseFloat(((majorOccurrences[k] / totalOcc) * 100).toFixed(1));
+    if (totalOccurrences === 0) {
+      strategicThemes.push({
+        keyword: userKey,
+        centrality: 0,
+        density: 0,
+        occurrences: 0
+      });
+      return;
     }
 
-    return {
-      keyword: k,
-      centrality,
-      density,
-      occurrences: totalOcc
-    };
+    // 2. Define the "Theme Cluster" for this user keyword
+    // We take the top 30 most frequently co-occurring author keywords (excluding the user keyword itself if it happens to be exactly an author keyword)
+    const clusterWords = Object.entries(coOccurWithUser)
+      .filter(([kw]) => kw !== userKey.toLowerCase())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 30)
+      .map(entry => entry[0]);
+
+    if (clusterWords.length === 0) {
+      strategicThemes.push({
+        keyword: userKey,
+        centrality: 0,
+        density: 0,
+        occurrences: totalOccurrences
+      });
+      return;
+    }
+
+    // 3. Compute Centrality (Callon)
+    // Centrality is the degree of external links. For a single keyword node, we sum its Equivalence Index with its cluster.
+    // E_ij = (C_ij ^ 2) / (C_i * C_j)
+    let centralitySum = 0;
+    clusterWords.forEach(kw => {
+      const c_ij = coOccurWithUser[kw];
+      const c_i = totalOccurrences;
+      const c_j = kwGlobalCount[kw];
+      if (c_j > 0) {
+        centralitySum += (c_ij * c_ij) / (c_i * c_j);
+      }
+    });
+
+    // 4. Compute Density (Callon)
+    // Density is the internal cohesion of the cluster. We compute the average Equivalence Index between all pairs within the cluster.
+    // First, we need the global co-occurrences between the cluster words.
+    const clusterCoOccur: Record<string, number> = {};
+    matchingDocIndices.forEach(idx => {
+      const kws = docKeywords[idx];
+      // Keep only words that are in our cluster
+      const presentClusterWords = kws.filter(k => clusterWords.includes(k));
+      for (let i = 0; i < presentClusterWords.length; i++) {
+        for (let j = i + 1; j < presentClusterWords.length; j++) {
+          const pair = [presentClusterWords[i], presentClusterWords[j]].sort().join('|');
+          clusterCoOccur[pair] = (clusterCoOccur[pair] || 0) + 1;
+        }
+      }
+    });
+
+    let densitySum = 0;
+    let pairsCount = 0;
+    
+    for (let i = 0; i < clusterWords.length; i++) {
+      for (let j = i + 1; j < clusterWords.length; j++) {
+        const w1 = clusterWords[i];
+        const w2 = clusterWords[j];
+        const pair = [w1, w2].sort().join('|');
+        const c_ij = clusterCoOccur[pair] || 0;
+        if (c_ij > 0) {
+          const c_i = kwGlobalCount[w1];
+          const c_j = kwGlobalCount[w2];
+          densitySum += (c_ij * c_ij) / (c_i * c_j);
+        }
+        pairsCount++;
+      }
+    }
+
+    // Average internal density of the cluster
+    const averageDensity = pairsCount > 0 ? densitySum / pairsCount : 0;
+
+    strategicThemes.push({
+      keyword: userKey,
+      centrality: parseFloat((centralitySum * 10).toFixed(2)), // Scale for visualization
+      density: parseFloat((averageDensity * 1000).toFixed(2)), // Scale for visualization, density values are usually very small
+      occurrences: totalOccurrences
+    });
   });
+
+  return strategicThemes;
 };
 

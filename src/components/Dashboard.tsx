@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { DocumentRecord, ActiveColumns } from '../types';
+import { DocumentRecord, ActiveColumns, MetricData } from '../types';
 import { findOccurrences, findCoOccurrences, calculateStrategicThemes } from '../utils/analyzer';
 import { TrendsChart } from './Charts';
 import { StrategicDiagram } from './StrategicDiagram';
@@ -29,7 +29,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
   const [useWildcard, setUseWildcard] = useState(false);
   const [metricMode, setMetricMode] = useState<'absolute' | 'percentage'>('absolute');
   const [newKeyword, setNewKeyword] = useState('');
-  const [activeTab, setActiveTab] = useState<'occurrences' | 'co-occurrences' | 'strategic'>('occurrences');
+  const [activeTab, setActiveTab] = useState<'trends' | 'strategic'>('trends');
   const [isVolumeOpen, setIsVolumeOpen] = useState(false);
   const [isStateLoaded, setIsStateLoaded] = useState(false);
 
@@ -42,7 +42,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
           if (state.availableKeywords !== undefined) setAvailableKeywords(state.availableKeywords);
           if (state.activeKeywords !== undefined) setActiveKeywords(state.activeKeywords);
           if (state.metricMode !== undefined) setMetricMode(state.metricMode);
-          if (state.activeTab !== undefined) setActiveTab(state.activeTab);
+          if (state.activeTab !== undefined) {
+            const tab = state.activeTab;
+            setActiveTab(tab === 'occurrences' || tab === 'co-occurrences' ? 'trends' : tab);
+          }
         }
         setIsStateLoaded(true);
       });
@@ -105,15 +108,43 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
     return findCoOccurrences(data, activeKeywords, columns, 10);
   }, [data, activeKeywords, columns]);
 
+  // Combine occurrences and co-occurrences for the single graph
+  const combinedTrendsData = useMemo(() => {
+    const years = Array.from(new Set([
+      ...occurrencesData.map(d => d.year),
+      ...cooccurrencesData.map(d => d.year)
+    ])).sort((a, b) => parseInt(a) - parseInt(b));
+
+    return years.map(yr => {
+      const occItem = occurrencesData.find(d => d.year === yr) || {};
+      const coItem = cooccurrencesData.find(d => d.year === yr) || {};
+      
+      const merged: Record<string, number | string> = { year: yr };
+      
+      // Merge all keys from occItem
+      Object.keys(occItem).forEach(key => {
+        if (key !== 'year') merged[key] = occItem[key];
+      });
+      // Merge all keys from coItem
+      Object.keys(coItem).forEach(key => {
+        if (key !== 'year') merged[key] = coItem[key];
+      });
+
+      // Ensure _totalDocs is computed correctly
+      merged._totalDocs = occItem._totalDocs || coItem._totalDocs || 1;
+      
+      return merged as MetricData;
+    });
+  }, [occurrencesData, cooccurrencesData]);
+
   const processedChartData = useMemo(() => {
-    const rawData = activeTab === 'occurrences' ? occurrencesData : cooccurrencesData;
     if (metricMode === 'absolute') {
-      return rawData;
+      return combinedTrendsData;
     }
     // Relative %: percentage of documents in that year
-    return rawData.map(item => {
+    return combinedTrendsData.map(item => {
       const totalDocs = (item._totalDocs as number) || 1;
-      const convertedItem: typeof item = { year: item.year };
+      const convertedItem: Record<string, number | string> = { year: item.year };
       Object.keys(item).forEach(key => {
         if (key !== 'year' && key !== '_totalDocs') {
           const val = item[key];
@@ -122,9 +153,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
           }
         }
       });
-      return convertedItem;
+      return convertedItem as MetricData;
     });
-  }, [occurrencesData, cooccurrencesData, metricMode, activeTab]);
+  }, [combinedTrendsData, metricMode]);
 
   const strategicThemes = useMemo(() => {
     return calculateStrategicThemes(data, activeKeywords, columns);
@@ -188,26 +219,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
             <div className="flex items-center gap-3 shrink-0 bg-white p-2 rounded-xl shadow-xs border border-slate-100 self-start xl:self-stretch">
               <div className="flex bg-slate-50 p-1 rounded-lg border border-slate-200/60">
                 <button
-                  onClick={() => setActiveTab('occurrences')}
+                  onClick={() => setActiveTab('trends')}
                   className={cn(
                     "px-3 py-1.5 rounded-md text-[11px] font-bold transition-all duration-200",
-                    activeTab === 'occurrences' 
+                    activeTab === 'trends' 
                       ? "bg-white text-slate-900 shadow-xs border border-slate-200/50" 
                       : "text-slate-500 hover:text-slate-700"
                   )}
                 >
-                  📊 Évolution
-                </button>
-                <button
-                  onClick={() => setActiveTab('co-occurrences')}
-                  className={cn(
-                    "px-3 py-1.5 rounded-md text-[11px] font-bold transition-all duration-200",
-                    activeTab === 'co-occurrences' 
-                      ? "bg-white text-slate-900 shadow-xs border border-slate-200/50" 
-                      : "text-slate-500 hover:text-slate-700"
-                  )}
-                >
-                  🔗 Co-occurrences
+                  📊 Évolution & Co-occurrences
                 </button>
                 <button
                   onClick={() => setActiveTab('strategic')}
@@ -255,18 +275,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, onReset }) => {
 
           {/* Main Chart Canvas Display Area (Flex-1 to take all remaining space) */}
           <div className="flex-1 w-full bg-white rounded-2xl shadow-xs border border-slate-100 p-4 flex flex-col min-h-0">
-            {activeTab === 'occurrences' ? (
+            {activeTab === 'trends' ? (
               <TrendsChart 
                 data={processedChartData} 
-                dataKeys={activeKeywords} 
-                title=""
-                suffix={metricMode === 'percentage' ? '%' : ''}
-              />
-            ) : activeTab === 'co-occurrences' ? (
-              <TrendsChart 
-                data={processedChartData} 
-                dataKeys={topPairs} 
-                title="" 
+                activeKeywords={activeKeywords}
+                topPairs={topPairs}
                 suffix={metricMode === 'percentage' ? '%' : ''}
               />
             ) : (
